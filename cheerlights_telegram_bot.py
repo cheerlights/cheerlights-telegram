@@ -9,7 +9,7 @@
 # Questions? Comments? Suggestions? Contact me one of the following ways:
 # E-mail: n8acl@qsl.net
 # Twitter: @n8acl
-# Discord: Ravendos#7364
+# Discord: Ravendos
 # Mastodon: @n8acl@mastodon.radio
 # Website: https://www.qsl.net/n8acl
 
