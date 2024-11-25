@@ -1,74 +1,66 @@
-#################################################################################
+#!/usr/bin/env python
 
-# CheerLights Telegram Bot
-# Developed by: Jeff Lehman, N8ACL
-# Date: 10/06/2022
-# Current Version: 1.0
-# https://github.com/cheerlights/cheerlights-telegram
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+)
 
-# Questions? Comments? Suggestions? Contact me one of the following ways:
-# E-mail: n8acl@qsl.net
-# Twitter: @n8acl
-# Discord: Ravendos
-# Mastodon: @n8acl@mastodon.radio
-# Website: https://www.qsl.net/n8acl
 
-#############################
-# Import Libraries
-import config as cfg
 import os
 import json
 import requests
-import tweepy
 from datetime import datetime, date, time, timedelta
-from tweepy import OAuthHandler
-from aiogram import Bot, Dispatcher, executor, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton  # for reply keyboard (sends message)
+import time
+import sqlalchemy
+from sqlalchemy import text as sqltext, select, MetaData, Table, update, insert
 
+if os.path.exists('src'):
+   # Import our Custom Libraries
+   import src.db_functions as dbf
+   import src.db_conn as dbc
+else:
+	#set the parent directory one level up and then import the src files
+   current_dir = os.path.dirname(os.path.abspath(__file__))
+   parent_dir = os.path.abspath(os.path.join(current_dir, ".."))
+   sys.path.insert(0, parent_dir)  
 
-#############################
-# Telegram Bot Configuration
-telegram_bot = Bot(cfg.telegram['token'])
-dp = Dispatcher(telegram_bot)
-
-# Define Color Keyboard
-color1 = KeyboardButton('Red')
-color2 = KeyboardButton('Green')
-color3 = KeyboardButton('Blue')
-color4 = KeyboardButton('Cyan')
-color5 = KeyboardButton('White')
-color6 = KeyboardButton('Old Lace')
-color7 = KeyboardButton('Purple')
-color8 = KeyboardButton('Magenta')
-color9 = KeyboardButton('Yellow')
-color10 = KeyboardButton('Orange')
-color11 = KeyboardButton('Pink')
-
-color_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True).add(color1,color2,color3,color4,color5,color6,color7,color8,color9,color10,color11)
-
-# Define Command Keyboard
-cmd1 = KeyboardButton('Set Color')
-cmd2 = KeyboardButton('Get Current Color')
-
-cmd_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True).add(cmd1).add(cmd2)
-
-
-
+   import src.db_functions as dbf
+   import src.db_conn as dbc 
 
 #############################
-# Twitter API Object Configuration
-auth = OAuthHandler(cfg.twitterkeys["consumer_key"], cfg.twitterkeys["consumer_secret"])
-auth.set_access_token(cfg.twitterkeys["access_token"], cfg.twitterkeys["access_secret"])
+# import config json file
 
-twitter = tweepy.API(auth)
+config_file = os.path.abspath(os.path.join(os.path.dirname( __file__ ), '.', 'config.json'))
+
+with open(config_file, "r") as read_file:
+    config = json.load(read_file)
+read_file.close()
+
+#############################
+# set database connection
+
+try:
+    db_engine = dbc.db_connection()
+    print("Database Connection established")
+
+except Exception as e:
+    print("Database Connection could not be established.", e)
+
+metadata = sqlalchemy.MetaData()
+metadata.reflect(bind=db_engine)
+
+cheerlights_log = metadata.tables['cheerlights_logs']
 
 #############################
 # Define Variables
 # DO NOT CHANGE BELOW
 
-cheerlights_api_url = 'http://api.thingspeak.com/channels/1417/field/2/last.json'
+cheerlights_api_url = 'http://api.thingspeak.com/channels/1417/field/1/last.json'
 linefeed = "\r\n"
-
+rate_limiter = {}
 color_pick = {
     "red" : "#FF0000",
     "green" : "#008000",
@@ -83,8 +75,6 @@ color_pick = {
     "pink" : "#FFC0CB"
 }
 
-
-
 #############################
 # Define Functions
 
@@ -93,7 +83,7 @@ def use_api():
 
     r = requests.get(cheerlights_api_url, timeout=None)
     json = r.json()
-    return json['field2']
+    return json['field1']
 
 def hex_to_rgb(col_hex):
     #Convert a hex colour to an RGB tuple.
@@ -111,140 +101,106 @@ def get_key(val, my_dict):
 def valid_colors():
     # Returns list of valid colors
 
-    valid_colors = ''
+    valid_colors = []
 
     for item in list(color_pick.keys()):
-        valid_colors = valid_colors + item + linefeed
+        valid_colors.append(item)
 
     return valid_colors
 
-def send_color(color_name):
+def logging(log_message, full_name, color):
 
-    now = datetime.now()
-    timestamp = now.strftime("%m/%d/%Y %H:%M:%S")
+    sql = cheerlights_log.insert()
+    values_list = [{
+        'application': 'telegram',
+        'username' : full_name,
+        'userid': '',
+        'message': log_message,
+        'color': color}]
 
-    status = "Set @CheerLights to " + color_name + " on " + timestamp 
+    dbf.insert_sql(db_engine,sql,values_list)
 
-    twitter.update_status(status)
+def send_to_webhook(color, username):
 
-#############################
-# Define Telegram Bot Functions
+    cl_msg = {'source': 'telegram', 'colours': color, 'username': username.replace(' ','_')}
 
-@dp.message_handler(commands=['start','help'])
-async def welcome(message: types.Message):
-    await message.answer('Welcome to the CheerLights Bot! Control CheerLights around the world.', reply_markup = cmd_kb)
+    response = requests.post(
+        config['cl_wh'], data=json.dumps(cl_msg),
+        headers={'Content-Type': 'application/json'},
+        auth = (config['wh_user'],config['wh_password'])
+    )
 
-@dp.message_handler(regexp='Set Color')
-async def set_color(message: types.Message):
-    await message.answer('Please select one of the following colors', reply_markup = color_kb)
+    return f"Setting CheerLights to color: {color[0]}"
 
-@dp.message_handler(regexp='Get Current Color')
-async def get_color(message: types.Message):
-    color_code = use_api()
-    curr_color = get_key(color_code.upper(),color_pick)  
-    await message.answer('Current CheerLights color: ' + curr_color)
+################################
+### Define bot
 
-@dp.message_handler(regexp='Red')
-async def set_red(message: types.Message):
+# Start command handler
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    keyboard = [
+        [InlineKeyboardButton("Get Current Color", callback_data='get_color')],
+        [InlineKeyboardButton("Set Color", callback_data='set_color')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Welcome to the CheerLights Bot! Choose an option:", reply_markup=reply_markup)
 
-    color_name = 'Red'
 
-    send_color(color_name)
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()  # Acknowledge the callback query
 
-    await message.answer('Setting CheerLights to color: ' + color_name)
+    if query.data == 'get_color':
+        user = query.from_user
+        full_name = f"{user.first_name or ''} {user.last_name or ''}".strip().replace(' ','_') or "Anonymous"
+        current_color = use_api()
+        log_message = f"Command: Get Current Color"
+        logging(log_message, full_name, current_color)
+        await query.edit_message_text(f"The current CheerLights color is: {current_color}")
+    elif query.data == 'set_color':
 
-@dp.message_handler(regexp='Green')
-async def set_greeb(message: types.Message):
+        VALID_COLORS = valid_colors()
 
-    color_name = 'Green'
+        color_keyboard = [
+            [InlineKeyboardButton(color.capitalize(), callback_data=color) for color in VALID_COLORS[0:3]],
+            [InlineKeyboardButton(color.capitalize(), callback_data=color) for color in VALID_COLORS[3:6]],
+            [InlineKeyboardButton(color.capitalize(), callback_data=color) for color in VALID_COLORS[6:9]],
+            [InlineKeyboardButton(color.capitalize(), callback_data=color) for color in VALID_COLORS[9:]]
+ 
+        ]
+        reply_markup = InlineKeyboardMarkup(color_keyboard)
+        await query.edit_message_text("Choose a color to set:", reply_markup=reply_markup)
+    elif query.data in valid_colors():
+        now = int(time.time())        
+        user = query.from_user
+        full_name = f"{user.first_name or ''} {user.last_name or ''}".strip().replace(' ','_') or "Anonymous"
+        if full_name not in rate_limiter:
+            rate_limiter[full_name] = 9999999
+        
+        if rate_limiter[full_name] == 9999999 or (now - rate_limiter[full_name] >=config['msg_wait_time']):
+            rate_limiter[full_name] = now
+            
+            color = []
+            color.append(query.data)
+            log_message = f"Command: Set Color to {color[0]}"
+            logging(log_message, full_name, color[0])
+            result = send_to_webhook(color, full_name)
+            await query.edit_message_text(result) 
+        else:
+            await query.edit_message_text("Slow down there sport! You are trying to send colors way too fast. Please wait "+ str(config['msg_wait_time']) + " seconds before trying again.")
 
-    send_color(color_name)
+def main():
 
-    await message.answer('Setting CheerLights to color: ' + color_name)
+    # Create the application
+    application = Application.builder().token(config['telegram']['token']).build()
 
-@dp.message_handler(regexp='Blue')
-async def set_blue(message: types.Message):
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(handle_callback_query))
 
-    color_name = 'Blue'
+    # Start the bot
+    print("Bot Running...")
+    application.run_polling() 
 
-    send_color(color_name)
 
-    await message.answer('Setting CheerLights to color: ' + color_name)
-
-@dp.message_handler(regexp='Cyan')
-async def set_cyan(message: types.Message):
-
-    color_name = 'Cyan'
-
-    send_color(color_name)
-
-    await message.answer('Setting CheerLights to color: ' + color_name)
-
-@dp.message_handler(regexp='White')
-async def set_white(message: types.Message):
-
-    color_name = 'White'
-
-    send_color(color_name)
-
-    await message.answer('Setting CheerLights to color: ' + color_name)
-
-@dp.message_handler(regexp='Old Lace')
-async def set_oldlace(message: types.Message):
-
-    color_name = 'oldlace'
-
-    send_color(color_name)
-
-    await message.answer('Setting CheerLights to color: ' + color_name)
-
-@dp.message_handler(regexp='Purple')
-async def set_purple(message: types.Message):
-
-    color_name = 'Purple'
-
-    send_color(color_name)
-
-    await message.answer('Setting CheerLights to color: ' + color_name)
-
-@dp.message_handler(regexp='Magenta')
-async def set_magenta(message: types.Message):
-
-    color_name = 'Magenta'
-
-    send_color(color_name)
-
-    await message.answer('Setting CheerLights to color: ' + color_name)
-
-@dp.message_handler(regexp='Yellow')
-async def set_yellow(message: types.Message):
-
-    color_name = 'Yellow'
-
-    send_color(color_name)
-
-    await message.answer('Setting CheerLights to color: ' + color_name)
-
-@dp.message_handler(regexp='Orange')
-async def set_orange(message: types.Message):
-
-    color_name = 'Orange'
-
-    send_color(color_name)
-
-    await message.answer('Setting CheerLights to color: ' + color_name)
-
-@dp.message_handler(regexp='Pink')
-async def set_pink(message: types.Message):
-
-    color_name = 'Pink'
-
-    send_color(color_name)
-
-    await message.answer('Setting CheerLights to color: ' + color_name)
-
-#############################
-# Main Program
-
-# Start Bot
-executor.start_polling(dp)
+if __name__ == "__main__":
+    main()

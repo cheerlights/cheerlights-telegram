@@ -1,0 +1,21 @@
+{
+    "logging_enabled": true,
+    "msg_wait_time": 30,
+    "telegram": {
+        "token": "TELEGRAM BOT TOKEN HERE"
+    },
+    "cl_wh": "CL WEBHOOK HERE",
+    "wh_user": "CL WEBHOOK USER HERE",
+    "wh_password": "CL WEBHOOK USER PASSWORD HERE",
+
+    "database": {
+    "rdbms_type": "mssql",
+    "credentials": {
+      "username": "DB USER NAME HERE",
+      "password": "DB PASSWORD HERE",
+      "host": "DB HOST HERE",
+      "db": "LOGGING DB NAME HERE"
+    }
+  }
+
+}

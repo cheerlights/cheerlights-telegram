@@ -1,3 +1,7 @@
-python-telegram-bot
-tweepy
+python-telegram-bot==21.6
 requests
+sqlalchemy
+sqlalchemy-utils
+pymssql
+pymysql
+psycopg2-binary

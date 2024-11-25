@@ -1,0 +1,10 @@
+version: "3.8"
+services:
+
+  cheerlights_telegrambot:
+    build: .
+    container_name: cheerlights_telegrambot
+    volumes:
+      - /path/to/telegrambot/data/config.json:/app/config.json
+      # - /path/to/telegrambot/data/block_list.json:/app/block_list.json
+    restart: unless-stopped
